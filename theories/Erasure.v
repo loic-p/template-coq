@@ -68,7 +68,7 @@ Section Erase.
       if is_dummy c' then
         match brs with
         | (_, x) :: _ => erase Γ x (* Singleton elimination *)
-        | nil => ret assertfalse (* Falsity elimination *)
+        | nil => ret (tCase ip p c' brs) (* Falsity elimination *)
         end
       else
         brs' <- monad_map (T:=typing_result) (fun x => x' <- erase Γ (snd x);; ret (fst x, x')) brs;;
@@ -149,13 +149,79 @@ Definition computational_ind Σ ind :=
 Require Import Bool.
 Coercion is_true : bool >-> Sortclass.
 
+Definition computational_type Σ T :=
+  exists ind, inductive_arity T = Some ind /\ computational_ind Σ ind.
+
 (** The precondition on the extraction theorem. *)
 
 Record extraction_pre (Σ : global_context) t T :=
   { extr_typed : Σ ;;; [] |- t : T;
     extr_env_axiom_free : axiom_free (fst Σ);
-    extr_computational_inductive :
-      exists ind, inductive_arity T = Some ind /\ computational_ind Σ ind }.
+    extr_computational_type : computational_type Σ T }.
+
+(** The observational equivalence relation between source and erased values. *)
+
+Definition destApp t :=
+  match t with
+  | tApp f args => (f, args)
+  | f => (f, [])
+  end.
+
+Inductive Question : Set  := 
+| Cnstr : Ast.inductive -> nat -> Question 
+| Abs : Question.
+
+Definition observe (q : Question) (v : term) : bool :=
+  match q with
+  | Cnstr i k =>
+    match v with
+    | tConstruct i' k' u =>
+      eq_ind i i' && eq_nat k k'
+    | _ => false
+    end
+  | Abs =>
+    match v with
+    | tLambda _ _ _ => true
+    | tFix _ _ => true
+    | _ => false
+    end
+  end.
+             
+
+(*
+Fixpoint obs_eq (Σ : global_context) (v v' : term) (T : term) (s : universe) : Prop :=
+  if is_prop_sort s then is_dummy v'
+  else
+    match T with
+    | tInd ind u =>
+      (* Canonical inductive value *)
+      let '(hd, args) := destApp v in
+      let '(hd', args') := destApp v' in
+      eq_term Σ hd hd' /\ obs_eq 
+      
+ | obs_eq_prf v T s : Σ ;;; [] |- v : T ->
+  Σ ;;; [] |- T : tSort s ->
+  is_prop_sort s ->
+  obs_eq Σ v dummy
+
+| obs_eq_cstr ind k u args args' T : Σ ;;; [] |- mkApps (tConstruct ind k u) args : T ->
+  computational_type Σ T ->
+  Forall2 (obs_eq Σ) args args' ->
+  obs_eq Σ (mkApps (tConstruct ind k u) args) (mkApps (tConstruct ind k u) args')
+
+| obs_eq_arrow na f f' T T' :
+    Σ ;;; [] |- f : tProd na T T' ->
+    (forall arg arg', obs_eq Σ arg arg' -> 
+    
+    obs_eq Σ f f'.                                     
+*)                      
+
+Record extraction_post (Σ : global_context) (t' v : term) :=
+  { extr_value : term;
+    extr_eval : eval Σ [] t' extr_value;
+    (* extr_equiv : obs_eq Σ v extr_value *) }.
+    
+
 
 (** The extraction correctness theorem we conjecture. *)
 
@@ -163,7 +229,8 @@ Definition erasure_correctness :=
   forall Σ t T, extraction_pre Σ t T ->
     forall (f : Fuel) (t' : term),
       erase Σ [] t = Checked t' ->
-      forall v, eval Σ [] t v -> eval Σ [] t' v.
+      forall v, eval Σ [] t v ->
+      exists v', eval Σ [] t' v'.
       
 Conjecture erasure_correct : erasure_correctness.
 
